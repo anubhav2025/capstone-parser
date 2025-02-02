@@ -1,0 +1,23 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: parser
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: parser-consumer-group
+
+parser:
+  kafka:
+    topic: "parser-topic"
+
+logging:
+  level:
+    org:
+      apache:
+        kafka: ERROR
+      springframework:
+        kafka: ERROR
+    kafka: ERROR
