@@ -1,6 +1,7 @@
 package com.capstone.parser.service.processor;
 
 import com.capstone.parser.model.*;
+import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
 import com.capstone.parser.service.StateSeverityMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -8,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.time.Instant;
 import java.util.*;
 
 @Service
@@ -15,23 +17,55 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
 
     private final ElasticSearchService elasticSearchService;
     private final ObjectMapper objectMapper;
+    private final DeDupService deDupService;
 
     public SecretScanJobProcessorService(ElasticSearchService elasticSearchService,
-                                         ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper,
+                                         DeDupService deDupService) {
         this.elasticSearchService = elasticSearchService;
         this.objectMapper = objectMapper;
+        this.deDupService = deDupService;
     }
 
     @Override
     public void processJob(String filePath) throws Exception {
+        // 1) Load existing docs for SECRET_SCAN
+        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(ScanToolType.SECRET_SCAN);
+
+        // 2) Parse file
         List<Map<String, Object>> alerts = objectMapper.readValue(
-                new File(filePath),
-                new TypeReference<List<Map<String, Object>>>() {}
+            new File(filePath),
+            new TypeReference<List<Map<String, Object>>>() {}
         );
 
+        // 3) For each alert => newFinding => dedup => save or skip
         for (Map<String, Object> alert : alerts) {
-            Finding finding = mapAlertToFinding(alert);
-            elasticSearchService.saveFinding(finding);
+            Finding newFinding = mapAlertToFinding(alert);
+
+            String newHash = deDupService.computeHashForFinding(newFinding);
+            Finding existing = existingMap.get(newHash);
+            if (existing == null) {
+                // new
+                String now = Instant.now().toString();
+                newFinding.setCreatedAt(now);
+                newFinding.setUpdatedAt(now);
+
+                elasticSearchService.saveFinding(newFinding);
+                existingMap.put(newHash, newFinding);
+            } else {
+                // check if updated
+                boolean updated = deDupService.isUpdated(newFinding, existing);
+                if (updated) {
+                    // Keep the original createdAt, update updatedAt
+                    newFinding.setCreatedAt(existing.getCreatedAt());
+                    newFinding.setUpdatedAt(Instant.now().toString());
+
+                    deDupService.updateInES(newFinding, existing);
+                    existingMap.put(newHash, newFinding);
+                } else {
+                    // skip
+                }
+            }
         }
     }
 
@@ -40,22 +74,18 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
 
         String ghState = (String) alert.get("state");
         String url = (String) alert.get("url");
-
+        // secret_type_display_name => used for "title"
         String secretTypeDisplay = (String) alert.get("secret_type_display_name");
         String secretType = (String) alert.get("secret_type");
 
-        // GH has no explicit severity for secrets, we define default = HIGH or CRITICAL
-        FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(null);
-
-        // Possibly "resolved" => "fixed"
-        // "open" => "open"
-        // "dismissed" => "suppressed"? 
-        // etc. No "dismissed_reason" typically for secret scanning, but let's just pass null
+        // Map GH state
         FindingState internalState = StateSeverityMapper.mapGitHubState(ghState, null);
+        // GH has no explicit severity => default to HIGH or CRITICAL
+        FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(null);
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
-        finding.setTitle(secretTypeDisplay);
+        finding.setTitle(secretTypeDisplay);   // <--- used for hashing
         finding.setDesc("Secret found in repo (type: " + secretType + ")");
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
@@ -66,10 +96,14 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
         finding.setCvss(null);
         finding.setType(secretType);
         finding.setSuggestions("Rotate or revoke this secret immediately");
-        finding.setFilePath(null); 
+        finding.setFilePath(null);
         finding.setComponentName(null);
         finding.setComponentVersion(null);
+
+        // store entire raw alert
         finding.setToolAdditionalProperties(alert);
+
+        // Do NOT set createdAt/updatedAt here, we will handle it in the dedup logic
 
         return finding;
     }
