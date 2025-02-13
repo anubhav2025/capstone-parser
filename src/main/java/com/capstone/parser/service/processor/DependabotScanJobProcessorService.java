@@ -28,47 +28,44 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
     }
 
     @Override
-    public void processJob(String filePath) throws Exception {
-        // 1) Load existing docs once for DEPENDABOT
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(ScanToolType.DEPENDABOT);
+    public void processJob(String filePath, String esIndex) throws Exception {
+        // 1) Load existing docs for DEPENDABOT from the given index
+        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
+            ScanToolType.DEPENDABOT, esIndex
+        );
 
         // 2) Parse the file (alerts array)
         List<Map<String, Object>> alerts = objectMapper.readValue(
-                new File(filePath),
-                new TypeReference<List<Map<String, Object>>>() {}
+            new File(filePath),
+            new TypeReference<List<Map<String, Object>>>() {}
         );
 
-        // 3) For each alert, map to Finding
+        // 3) For each alert => map => deduplicate => save or skip
         for (Map<String, Object> alert : alerts) {
             Finding newFinding = mapAlertToFinding(alert);
-            // System.out.println("hewllo");
-            // System.out.println(newFinding.toString());
-
-            // 4) Compute hash
             String newHash = deDupService.computeHashForFinding(newFinding);
 
-            // 5) Check if existing doc is in memory
             Finding existing = existingMap.get(newHash);
             if (existing == null) {
-                // => brand new doc
+                // brand new doc
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
 
-                elasticSearchService.saveFinding(newFinding);
+                elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
             } else {
-                // => matching doc found => check if updated
+                // check if updated
                 boolean updated = deDupService.isUpdated(newFinding, existing);
                 if (updated) {
-                    // Keep the original createdAt, update updatedAt
+                    // Keep the original createdAt
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
 
-                    deDupService.updateInES(newFinding, existing);
+                    deDupService.updateInES(newFinding, existing, esIndex);
                     existingMap.put(newHash, newFinding); 
                 } else {
-                    // => truly redundant => skip
+                    // skip
                 }
             }
         }
@@ -132,7 +129,7 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
-        finding.setTitle(summary);         // <--- Title used for hashing
+        finding.setTitle(summary);  // <--- Title used for hashing
         finding.setDesc(description);
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
@@ -146,8 +143,8 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
         finding.setFilePath(filePath);
         finding.setComponentName(componentName);
         finding.setComponentVersion(null);
-        finding.setToolAdditionalProperties(alert); // contains "number"
 
+        finding.setToolAdditionalProperties(alert);
         return finding;
     }
 }

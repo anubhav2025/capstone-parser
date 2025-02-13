@@ -2,18 +2,31 @@ package com.capstone.parser.dto;
 
 public class ParseJobEvent {
 
-    // e.g. "code-scan", "dependabot", "secret-scan"
-    private String type;
+    // e.g. "codescan", "dependabot", "secretscan"
+    private String toolName;
 
     // path to JSON file containing alerts
     private String scanFilePath;
 
-    // Getters and Setters
-    public String getType() {
-        return type;
+    // The Elasticsearch index to store data for this tenant
+    private String esIndex;
+
+    public ParseJobEvent() {
     }
-    public void setType(String type) {
-        this.type = type;
+
+    public ParseJobEvent(String toolName, String scanFilePath, String esIndex) {
+        this.toolName = toolName;
+        this.scanFilePath = scanFilePath;
+        this.esIndex = esIndex;
+    }
+
+    // Getters & Setters
+
+    public String getToolName() {
+        return toolName;
+    }
+    public void setToolName(String toolName) {
+        this.toolName = toolName;
     }
 
     public String getScanFilePath() {
@@ -21,5 +34,12 @@ public class ParseJobEvent {
     }
     public void setScanFilePath(String scanFilePath) {
         this.scanFilePath = scanFilePath;
+    }
+
+    public String getEsIndex() {
+        return esIndex;
+    }
+    public void setEsIndex(String esIndex) {
+        this.esIndex = esIndex;
     }
 }

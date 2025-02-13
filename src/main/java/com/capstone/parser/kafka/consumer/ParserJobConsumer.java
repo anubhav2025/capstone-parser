@@ -37,30 +37,29 @@ public class ParserJobConsumer {
     )
     public void consume(String message) {
         try {
-            // Parse the incoming message into ScanJobEvent
-            System.out.println("Received ScanJobEvent: " + message);
+            System.out.println("Received ParseJobEvent: " + message);
             ParseJobEvent event = objectMapper.readValue(message, ParseJobEvent.class);
-            String type = event.getType();
-            String filePath = event.getScanFilePath();
 
-            switch (type) {
+            String toolName = event.getToolName();       // "codescan", "dependabot", "secretscan"
+            String filePath = event.getScanFilePath();  // e.g. "/path/to/scan-result.json"
+            String esIndex = event.getEsIndex();        // e.g. "tenant-123-findings"
+
+            switch (toolName.toLowerCase()) {
                 case "codescan":
-                    codeScanJobProcessorService.processJob(filePath);
+                    codeScanJobProcessorService.processJob(filePath, esIndex);
                     break;
                 case "dependabot":
-                    dependabotScanJobProcessorService.processJob(filePath);
+                    dependabotScanJobProcessorService.processJob(filePath, esIndex);
                     break;
                 case "secretscan":
-                    secretScanJobProcessorService.processJob(filePath);
+                    secretScanJobProcessorService.processJob(filePath, esIndex);
                     break;
                 default:
-                    // Log unknown type or handle error
-                    System.err.println("Unknown scan type: " + type);
+                    System.err.println("Unknown tool name: " + toolName);
                     break;
             }
 
         } catch (Exception e) {
-            // Log and handle exception
             e.printStackTrace();
         }
     }

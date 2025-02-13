@@ -28,12 +28,13 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
     }
 
     @Override
-    public void processJob(String filePath) throws Exception {
-        // 1) Load existing docs once for CODE_SCAN
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(ScanToolType.CODE_SCAN);
-        
+    public void processJob(String filePath, String esIndex) throws Exception {
+        // 1) Load existing docs for CODE_SCAN from the given ES index
+        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
+            ScanToolType.CODE_SCAN, esIndex
+        );
 
-        // 2) Parse the JSON array
+        // 2) Parse the JSON array from the file
         List<Map<String, Object>> alerts = objectMapper.readValue(
             new File(filePath),
             new TypeReference<List<Map<String, Object>>>() {}
@@ -46,26 +47,27 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
             String newHash = deDupService.computeHashForFinding(newFinding);
             Finding existing = existingMap.get(newHash);
             if (existing == null) {
-                // new
+                // => new doc
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
 
-                elasticSearchService.saveFinding(newFinding);
+                // Save to the target index
+                elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
             } else {
-                // System.out.println("Am i here??");
-                // compare
+                // => deduplicate => check if updated
                 boolean updated = deDupService.isUpdated(newFinding, existing);
                 if (updated) {
-                    // Keep the original createdAt, update updatedAt
+                    // Preserve original createdAt
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
 
-                    deDupService.updateInES(newFinding, existing);
+                    // Update in ES
+                    deDupService.updateInES(newFinding, existing, esIndex);
                     existingMap.put(newHash, newFinding);
                 } else {
-                    // skip
+                    // => skip
                 }
             }
         }
@@ -73,6 +75,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
 
     @SuppressWarnings("unchecked")
     private Finding mapAlertToFinding(Map<String, Object> alert) {
+        // Similar to your original logic
         String uniqueId = UUID.randomUUID().toString();
 
         String ghState = (String) alert.get("state");
@@ -87,7 +90,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
         String ruleId = null;
 
         if (rule != null) {
-            title = (String) rule.get("name");                // <--- used for hashing
+            title = (String) rule.get("name");
             desc = (String) rule.get("full_description");
             ghSeverity = (String) rule.get("security_severity_level");
             if (ghSeverity == null) {
@@ -123,7 +126,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
-        finding.setTitle(title);              // <--- used for hashing
+        finding.setTitle(title);
         finding.setDesc(desc);
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
@@ -139,7 +142,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
         finding.setComponentVersion(null);
 
         // store entire alert
-        finding.setToolAdditionalProperties(alert); // has "number"
+        finding.setToolAdditionalProperties(alert);
 
         return finding;
     }

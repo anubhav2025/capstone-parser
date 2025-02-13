@@ -28,39 +28,40 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
     }
 
     @Override
-    public void processJob(String filePath) throws Exception {
-        // 1) Load existing docs for SECRET_SCAN
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(ScanToolType.SECRET_SCAN);
+    public void processJob(String filePath, String esIndex) throws Exception {
+        // 1) Load existing docs for SECRET_SCAN from given index
+        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
+            ScanToolType.SECRET_SCAN, esIndex
+        );
 
-        // 2) Parse file
+        // 2) Parse the file
         List<Map<String, Object>> alerts = objectMapper.readValue(
             new File(filePath),
             new TypeReference<List<Map<String, Object>>>() {}
         );
 
-        // 3) For each alert => newFinding => dedup => save or skip
+        // 3) For each alert => map => dedup => save or skip
         for (Map<String, Object> alert : alerts) {
             Finding newFinding = mapAlertToFinding(alert);
 
             String newHash = deDupService.computeHashForFinding(newFinding);
             Finding existing = existingMap.get(newHash);
             if (existing == null) {
-                // new
+                // => new doc
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
 
-                elasticSearchService.saveFinding(newFinding);
+                elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
             } else {
-                // check if updated
+                // => check if updated
                 boolean updated = deDupService.isUpdated(newFinding, existing);
                 if (updated) {
-                    // Keep the original createdAt, update updatedAt
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
 
-                    deDupService.updateInES(newFinding, existing);
+                    deDupService.updateInES(newFinding, existing, esIndex);
                     existingMap.put(newHash, newFinding);
                 } else {
                     // skip
@@ -74,18 +75,17 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
 
         String ghState = (String) alert.get("state");
         String url = (String) alert.get("url");
-        // secret_type_display_name => used for "title"
         String secretTypeDisplay = (String) alert.get("secret_type_display_name");
         String secretType = (String) alert.get("secret_type");
 
         // Map GH state
         FindingState internalState = StateSeverityMapper.mapGitHubState(ghState, null);
-        // GH has no explicit severity => default to HIGH or CRITICAL
+        // GH has no explicit severity => default to HIGH, etc.
         FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(null);
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
-        finding.setTitle(secretTypeDisplay);   // <--- used for hashing
+        finding.setTitle(secretTypeDisplay);
         finding.setDesc("Secret found in repo (type: " + secretType + ")");
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
@@ -102,8 +102,6 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
 
         // store entire raw alert
         finding.setToolAdditionalProperties(alert);
-
-        // Do NOT set createdAt/updatedAt here, we will handle it in the dedup logic
 
         return finding;
     }

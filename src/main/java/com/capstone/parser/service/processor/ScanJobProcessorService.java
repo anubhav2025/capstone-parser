@@ -1,15 +1,9 @@
 package com.capstone.parser.service.processor;
 
-/**
- * Generic interface for processing a JSON scan file.
- */
 public interface ScanJobProcessorService {
-
     /**
-     * Process the scan results from the provided JSON file path.
-     *
-     * @param filePath The path to the JSON file containing tool-specific alerts.
-     * @throws Exception if reading or parsing fails
+     * Process the scan results from the provided JSON file path,
+     * saving them into the given ES index.
      */
-    void processJob(String filePath) throws Exception;
+    void processJob(String filePath, String esIndex) throws Exception;
 }
