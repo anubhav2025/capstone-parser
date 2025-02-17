@@ -3,6 +3,8 @@ package com.capstone.parser.model;
 import java.util.List;
 import java.util.Map;
 
+import com.capstone.parser.enums.ToolTypes;
+
 public class Finding {
 
     private String id;
@@ -11,7 +13,7 @@ public class Finding {
     private FindingSeverity severity;
     private FindingState state;
     private String url;
-    private ScanToolType toolType;
+    private ToolTypes toolType;
 
     private String cve;
     private List<String> cwes;
@@ -89,10 +91,10 @@ public class Finding {
         this.url = url;
     }
 
-    public ScanToolType getToolType() {
+    public ToolTypes getToolType() {
         return toolType;
     }
-    public void setToolType(ScanToolType toolType) {
+    public void setToolType(ToolTypes toolType) {
         this.toolType = toolType;
     }
 

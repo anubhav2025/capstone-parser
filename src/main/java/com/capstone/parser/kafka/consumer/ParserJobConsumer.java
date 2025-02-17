@@ -1,63 +1,89 @@
 package com.capstone.parser.kafka.consumer;
 
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
-
-import com.capstone.parser.config.ApplicationProperties;
-import com.capstone.parser.dto.ParseJobEvent;
+import com.capstone.parser.dto.ack.ParseAcknowledgement;
+import com.capstone.parser.dto.ack.payload.AcknowledgementEventPayload;
+import com.capstone.parser.dto.event.ParseRequestEvent;
+import com.capstone.parser.dto.event.payload.ParseRequestEventPayload;
+import com.capstone.parser.enums.ToolTypes;
+import com.capstone.parser.model.Tenant;
+import com.capstone.parser.repository.TenantRepository;
+import com.capstone.parser.service.AcknowledgementProducerService;
 import com.capstone.parser.service.processor.CodeScanJobProcessorService;
 import com.capstone.parser.service.processor.DependabotScanJobProcessorService;
 import com.capstone.parser.service.processor.SecretScanJobProcessorService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.stereotype.Component;
 
 @Component
 public class ParserJobConsumer {
 
-    private final ObjectMapper objectMapper;
     private final CodeScanJobProcessorService codeScanJobProcessorService;
     private final DependabotScanJobProcessorService dependabotScanJobProcessorService;
     private final SecretScanJobProcessorService secretScanJobProcessorService;
-    private final ApplicationProperties appProperties;
+    private final TenantRepository tenantRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AcknowledgementProducerService acknowledgementProducerService;
 
-    public ParserJobConsumer(ObjectMapper objectMapper,
-                             CodeScanJobProcessorService codeScanJobProcessorService,
+    public ParserJobConsumer(CodeScanJobProcessorService codeScanJobProcessorService,
                              DependabotScanJobProcessorService dependabotScanJobProcessorService,
                              SecretScanJobProcessorService secretScanJobProcessorService,
-                             ApplicationProperties appProperties) {
-        this.objectMapper = objectMapper;
+                             TenantRepository tenantRepository,
+                             AcknowledgementProducerService acknowledgementProducerService) {
         this.codeScanJobProcessorService = codeScanJobProcessorService;
         this.dependabotScanJobProcessorService = dependabotScanJobProcessorService;
         this.secretScanJobProcessorService = secretScanJobProcessorService;
-        this.appProperties = appProperties;
+        this.tenantRepository = tenantRepository;
+        this.acknowledgementProducerService = acknowledgementProducerService;
     }
 
     @KafkaListener(
-        topics = "#{applicationProperties.topic}",  // SpEL to read parser.kafka.topic
-        groupId = "${spring.kafka.consumer.group-id}"
+        topics = "${parser.kafka.topic}",
+        containerFactory = "kafkaListenerContainerFactory",
+        groupId = "parser-consumer-group"
     )
-    public void consume(String message) {
+    public void consumeParseEvent(@Payload String message) {
         try {
-            System.out.println("Received ParseJobEvent: " + message);
-            ParseJobEvent event = objectMapper.readValue(message, ParseJobEvent.class);
+            // Deserialize JSON string into ParseRequestEvent
+            ParseRequestEvent event = objectMapper.readValue(message, ParseRequestEvent.class);
+            System.out.println("Received ParseRequestEvent eventId=" + event.getEventId() +
+                    ", type=" + event.getType());
+            ParseRequestEventPayload payload = event.getPayload();
+            ToolTypes tool = payload.getTool();
+            String tenantId = payload.getTenantId();
+            String filePath = payload.getFilePath();
 
-            String toolName = event.getToolName();       // "codescan", "dependabot", "secretscan"
-            String filePath = event.getScanFilePath();  // e.g. "/path/to/scan-result.json"
-            String esIndex = event.getEsIndex();        // e.g. "tenant-123-findings"
+            Tenant tenant = tenantRepository.findByTenantId(tenantId);
+            if (tenant == null) {
+                System.err.println("Tenant not found for tenantId=" + tenantId);
+                return;
+            }
+            String esIndex = tenant.getEsIndex();
+            if (esIndex == null || esIndex.isBlank()) {
+                System.err.println("No esIndex set for tenantId=" + tenantId);
+                return;
+            }
 
-            switch (toolName.toLowerCase()) {
-                case "codescan":
+            switch (tool) {
+                case CODE_SCAN:
                     codeScanJobProcessorService.processJob(filePath, esIndex);
                     break;
-                case "dependabot":
+                case DEPENDABOT:
                     dependabotScanJobProcessorService.processJob(filePath, esIndex);
                     break;
-                case "secretscan":
+                case SECRET_SCAN:
                     secretScanJobProcessorService.processJob(filePath, esIndex);
                     break;
                 default:
-                    System.err.println("Unknown tool name: " + toolName);
+                    System.err.println("Unknown tool type: " + tool);
                     break;
             }
+            
+            AcknowledgementEventPayload ackPayload = new AcknowledgementEventPayload(event.getEventId());
+            ParseAcknowledgement parseAck = new ParseAcknowledgement(null, ackPayload);
+            acknowledgementProducerService.publishAcknowledgement(parseAck);
+            
 
         } catch (Exception e) {
             e.printStackTrace();

@@ -1,5 +1,6 @@
 package com.capstone.parser.service.processor;
 
+import com.capstone.parser.enums.ToolTypes;
 import com.capstone.parser.model.*;
 import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
@@ -31,7 +32,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
     public void processJob(String filePath, String esIndex) throws Exception {
         // 1) Load existing docs for CODE_SCAN from the given ES index
         Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
-            ScanToolType.CODE_SCAN, esIndex
+            ToolTypes.CODE_SCAN, esIndex
         );
 
         // 2) Parse the JSON array from the file
@@ -131,7 +132,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
         finding.setUrl(url);
-        finding.setToolType(ScanToolType.CODE_SCAN);
+        finding.setToolType(ToolTypes.CODE_SCAN);
         finding.setCve(null);
         finding.setCwes(cwes);
         finding.setCvss(null);

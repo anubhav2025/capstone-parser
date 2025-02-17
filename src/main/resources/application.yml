@@ -8,10 +8,17 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
       group-id: parser-consumer-group
+  datasource:
+    url: jdbc:mysql://localhost:3306/capstone_db
+    username: capstone
+    password: capstone
+  jpa:
+    hibernate:
+      ddl-auto: update
 
 parser:
   kafka:
-    topic: "parser-topic"
+    topic: jfc_parser
 
 logging:
   level:

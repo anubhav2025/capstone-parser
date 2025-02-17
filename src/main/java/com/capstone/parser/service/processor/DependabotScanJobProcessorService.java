@@ -1,5 +1,6 @@
 package com.capstone.parser.service.processor;
 
+import com.capstone.parser.enums.ToolTypes;
 import com.capstone.parser.model.*;
 import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
@@ -31,7 +32,7 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
     public void processJob(String filePath, String esIndex) throws Exception {
         // 1) Load existing docs for DEPENDABOT from the given index
         Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
-            ScanToolType.DEPENDABOT, esIndex
+            ToolTypes.DEPENDABOT, esIndex
         );
 
         // 2) Parse the file (alerts array)
@@ -134,7 +135,7 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
         finding.setUrl(url);
-        finding.setToolType(ScanToolType.DEPENDABOT);
+        finding.setToolType(ToolTypes.DEPENDABOT);
         finding.setCve(cve);
         finding.setCwes(cwes);
         finding.setCvss(cvss);

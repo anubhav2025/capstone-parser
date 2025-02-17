@@ -5,8 +5,9 @@ import co.elastic.clients.elasticsearch._types.query_dsl.MatchQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
+
+import com.capstone.parser.enums.ToolTypes;
 import com.capstone.parser.model.Finding;
-import com.capstone.parser.model.ScanToolType;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -29,7 +30,7 @@ public class DeDupService {
      * Fetch all existing documents from ES for the given tool type in the specified index,
      * so we can compare them with incoming alerts for de-dup.
      */
-    public Map<String, Finding> fetchExistingDocsByTool(ScanToolType toolType, String esIndex) throws IOException {
+    public Map<String, Finding> fetchExistingDocsByTool(ToolTypes toolType, String esIndex) throws IOException {
         Query toolTypeQuery = MatchQuery.of(t -> t
             .field("toolType")
             .query(toolType.toString())
