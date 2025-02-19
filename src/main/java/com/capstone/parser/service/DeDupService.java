@@ -31,6 +31,7 @@ public class DeDupService {
      * so we can compare them with incoming alerts for de-dup.
      */
     public Map<String, Finding> fetchExistingDocsByTool(ToolTypes toolType, String esIndex) throws IOException {
+        checkAndCreateIndexIfNotExists(esIndex);
         Query toolTypeQuery = MatchQuery.of(t -> t
             .field("toolType")
             .query(toolType.toString())
@@ -105,6 +106,21 @@ public class DeDupService {
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("MD5 algorithm not found", e);
+        }
+    }
+    private void checkAndCreateIndexIfNotExists(String indexName) {
+        try {
+            // Check existence (inline boolean)
+            boolean indexExists = esClient.indices()
+                    .exists(e -> e.index(indexName))
+                    .value();
+
+            // If the index does not exist, create it
+            if (!indexExists) {
+                esClient.indices().create(c -> c.index(indexName));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
