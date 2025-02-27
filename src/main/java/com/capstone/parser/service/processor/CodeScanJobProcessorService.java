@@ -141,6 +141,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
         finding.setFilePath(filePath);
         finding.setComponentName(null);
         finding.setComponentVersion(null);
+        finding.setTicketId(null);
 
         // store entire alert
         finding.setToolAdditionalProperties(alert);

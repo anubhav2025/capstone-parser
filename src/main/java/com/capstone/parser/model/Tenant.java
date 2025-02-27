@@ -24,11 +24,58 @@ public class Tenant {
 
     private String esIndex;
 
+    // Newly added columns
+    @Column(name = "account_url")
+    private String accountUrl;
+
+    @Column(name = "project_key")
+    private String projectKey;
+
+    @Column(name = "api_token")
+    private String apiToken;
+
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "email")
+    private String email;
+
+    public String getAccountUrl() {
+        return accountUrl;
+    }
+
+    public void setAccountUrl(String accountUrl) {
+        this.accountUrl = accountUrl;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getProjectKey() {
+        return projectKey;
+    }
+
+    public void setProjectKey(String projectKey) {
+        this.projectKey = projectKey;
+    }
+
+    public String getApiToken() {
+        return apiToken;
+    }
+
+    public void setApiToken(String apiToken) {
+        this.apiToken = apiToken;
+    }
+    
 
     public Tenant() {
     }

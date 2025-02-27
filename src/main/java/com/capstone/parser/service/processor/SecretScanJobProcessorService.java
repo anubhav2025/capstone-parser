@@ -100,6 +100,7 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
         finding.setFilePath(null);
         finding.setComponentName(null);
         finding.setComponentVersion(null);
+        finding.setTicketId(null);
 
         // store entire raw alert
         finding.setToolAdditionalProperties(alert);
