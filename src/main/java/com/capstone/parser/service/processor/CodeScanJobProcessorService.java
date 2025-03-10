@@ -1,9 +1,10 @@
 package com.capstone.parser.service.processor;
 
 import com.capstone.parser.enums.ToolTypes;
-import com.capstone.parser.model.*;
+import com.capstone.parser.model.Finding;
 import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
+import com.capstone.parser.service.ParserContextHolder;
 import com.capstone.parser.service.StateSeverityMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,78 +31,71 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
 
     @Override
     public void processJob(String filePath, String esIndex) throws Exception {
-        // 1) Load existing docs for CODE_SCAN from the given ES index
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
-            ToolTypes.CODE_SCAN, esIndex
-        );
+        // Load existing CODE_SCAN findings from ES
+        Map<String, Finding> existingMap =
+            deDupService.fetchExistingDocsByTool(ToolTypes.CODE_SCAN, esIndex);
 
-        // 2) Parse the JSON array from the file
+        // Parse the JSON array from the file
         List<Map<String, Object>> alerts = objectMapper.readValue(
             new File(filePath),
             new TypeReference<List<Map<String, Object>>>() {}
         );
 
-        // 3) For each alert => map => deduplicate => save or skip
+        // Instead of only changed findings, we collect all processed finding IDs.
+        List<String> allFindingIds = new ArrayList<>();
+
         for (Map<String, Object> alert : alerts) {
             Finding newFinding = mapAlertToFinding(alert);
-
             String newHash = deDupService.computeHashForFinding(newFinding);
             Finding existing = existingMap.get(newHash);
+
             if (existing == null) {
-                // => new doc
+                // New finding: save it and add its ID.
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
-
-                // Save to the target index
                 elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
+                allFindingIds.add(newFinding.getId());
             } else {
-                // => deduplicate => check if updated
-                boolean updated = deDupService.isUpdated(newFinding, existing);
-                if (updated) {
-                    // Preserve original createdAt
+                // Finding exists.
+                if (deDupService.isUpdated(newFinding, existing)) {
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
-
-                    // Update in ES
                     deDupService.updateInES(newFinding, existing, esIndex);
                     existingMap.put(newHash, newFinding);
+                    allFindingIds.add(existing.getId());
                 } else {
-                    // => skip
+                    // No update; add the existing finding's ID.
+                    allFindingIds.add(existing.getId());
                 }
             }
         }
+        // Force an ES refresh so all findings become searchable immediately.
+        elasticSearchService.refreshIndex(esIndex);
+
+        // Store all finding IDs in the ThreadLocal context.
+        ParserContextHolder.setChangedFindingIds(allFindingIds);
     }
 
     @SuppressWarnings("unchecked")
     private Finding mapAlertToFinding(Map<String, Object> alert) {
-        // Similar to your original logic
+        // Example mapping logic for CodeScan alerts.
         String uniqueId = UUID.randomUUID().toString();
-
         String ghState = (String) alert.get("state");
         String url = (String) alert.get("url");
         String dismissedReason = (String) alert.get("dismissed_reason");
 
         Map<String, Object> rule = (Map<String, Object>) alert.get("rule");
-        String title = null;
-        String desc = null;
-        String ghSeverity = null;
-        String suggestions = null;
-        String ruleId = null;
-
-        if (rule != null) {
-            title = (String) rule.get("name");
-            desc = (String) rule.get("full_description");
-            ghSeverity = (String) rule.get("security_severity_level");
-            if (ghSeverity == null) {
-                ghSeverity = (String) rule.get("severity");
-            }
-            suggestions = (String) rule.get("help");
-            ruleId = (String) rule.get("id");
+        String title = rule != null ? (String) rule.get("name") : null;
+        String desc = rule != null ? (String) rule.get("full_description") : null;
+        String ghSeverity = rule != null ? (String) rule.get("security_severity_level") : null;
+        if (ghSeverity == null && rule != null) {
+            ghSeverity = (String) rule.get("severity");
         }
+        String suggestions = rule != null ? (String) rule.get("help") : null;
+        String ruleId = rule != null ? (String) rule.get("id") : null;
 
-        // cwes
         List<String> cwes = new ArrayList<>();
         if (rule != null && rule.get("tags") instanceof List) {
             List<String> tags = (List<String>) rule.get("tags");
@@ -112,7 +106,6 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
             }
         }
 
-        // location path
         String filePath = null;
         Map<String, Object> mostRecentInstance = (Map<String, Object>) alert.get("most_recent_instance");
         if (mostRecentInstance != null) {
@@ -122,8 +115,9 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
             }
         }
 
-        FindingState internalState = StateSeverityMapper.mapGitHubState(ghState, dismissedReason);
-        FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(ghSeverity);
+        // Map GitHub state to internal state
+        var internalState = StateSeverityMapper.mapGitHubState(ghState, dismissedReason);
+        var internalSeverity = StateSeverityMapper.mapGitHubSeverity(ghSeverity);
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
@@ -143,9 +137,7 @@ public class CodeScanJobProcessorService implements ScanJobProcessorService {
         finding.setComponentVersion(null);
         finding.setTicketId(null);
 
-        // store entire alert
         finding.setToolAdditionalProperties(alert);
-
         return finding;
     }
 }

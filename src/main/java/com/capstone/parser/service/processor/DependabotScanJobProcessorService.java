@@ -1,9 +1,10 @@
 package com.capstone.parser.service.processor;
 
 import com.capstone.parser.enums.ToolTypes;
-import com.capstone.parser.model.*;
+import com.capstone.parser.model.Finding;
 import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
+import com.capstone.parser.service.ParserContextHolder;
 import com.capstone.parser.service.StateSeverityMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,57 +31,53 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
 
     @Override
     public void processJob(String filePath, String esIndex) throws Exception {
-        // 1) Load existing docs for DEPENDABOT from the given index
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
-            ToolTypes.DEPENDABOT, esIndex
-        );
+        // Load existing Dependabot findings from ES
+        Map<String, Finding> existingMap =
+            deDupService.fetchExistingDocsByTool(ToolTypes.DEPENDABOT, esIndex);
 
-        // 2) Parse the file (alerts array)
         List<Map<String, Object>> alerts = objectMapper.readValue(
             new File(filePath),
             new TypeReference<List<Map<String, Object>>>() {}
         );
 
-        // 3) For each alert => map => deduplicate => save or skip
+        List<String> allFindingIds = new ArrayList<>();
+
         for (Map<String, Object> alert : alerts) {
             Finding newFinding = mapAlertToFinding(alert);
             String newHash = deDupService.computeHashForFinding(newFinding);
-
             Finding existing = existingMap.get(newHash);
+
             if (existing == null) {
-                // brand new doc
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
-
                 elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
+                allFindingIds.add(newFinding.getId());
             } else {
-                // check if updated
-                boolean updated = deDupService.isUpdated(newFinding, existing);
-                if (updated) {
-                    // Keep the original createdAt
+                if (deDupService.isUpdated(newFinding, existing)) {
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
-
                     deDupService.updateInES(newFinding, existing, esIndex);
-                    existingMap.put(newHash, newFinding); 
+                    existingMap.put(newHash, newFinding);
+                    allFindingIds.add(existing.getId());
                 } else {
-                    // skip
+                    allFindingIds.add(existing.getId());
                 }
             }
         }
+
+        elasticSearchService.refreshIndex(esIndex);
+        ParserContextHolder.setChangedFindingIds(allFindingIds);
     }
 
     @SuppressWarnings("unchecked")
     private Finding mapAlertToFinding(Map<String, Object> alert) {
         String uniqueId = UUID.randomUUID().toString();
-
         String ghState = (String) alert.get("state");
         String url = (String) alert.get("url");
         String dismissedReason = (String) alert.get("dismissed_reason");
 
-        // security_advisory
         Map<String, Object> securityAdvisory = (Map<String, Object>) alert.get("security_advisory");
         String cve = null;
         String summary = null;
@@ -95,25 +92,20 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
             description = (String) securityAdvisory.get("description");
             ghSeverity = (String) securityAdvisory.get("severity");
 
-            // parse cwes
             if (securityAdvisory.get("cwes") instanceof List) {
                 List<Map<String, Object>> cweList = (List<Map<String, Object>>) securityAdvisory.get("cwes");
                 for (Map<String, Object> cweObj : cweList) {
                     String cweId = (String) cweObj.get("cwe_id");
-                    if (cweId != null) {
-                        cwes.add(cweId);
-                    }
+                    if (cweId != null) cwes.add(cweId);
                 }
             }
 
-            // cvss
             Map<String, Object> cvssObj = (Map<String, Object>) securityAdvisory.get("cvss");
             if (cvssObj != null && cvssObj.get("score") != null) {
                 cvss = String.valueOf(cvssObj.get("score"));
             }
         }
 
-        // dependency
         Map<String, Object> dependency = (Map<String, Object>) alert.get("dependency");
         String filePath = null;
         String componentName = null;
@@ -125,12 +117,12 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
             }
         }
 
-        FindingState internalState = StateSeverityMapper.mapGitHubState(ghState, dismissedReason);
-        FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(ghSeverity);
+        var internalState = StateSeverityMapper.mapGitHubState(ghState, dismissedReason);
+        var internalSeverity = StateSeverityMapper.mapGitHubSeverity(ghSeverity);
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
-        finding.setTitle(summary);  // <--- Title used for hashing
+        finding.setTitle(summary);
         finding.setDesc(description);
         finding.setSeverity(internalSeverity);
         finding.setState(internalState);
@@ -145,7 +137,6 @@ public class DependabotScanJobProcessorService implements ScanJobProcessorServic
         finding.setComponentName(componentName);
         finding.setComponentVersion(null);
         finding.setTicketId(null);
-
         finding.setToolAdditionalProperties(alert);
         return finding;
     }

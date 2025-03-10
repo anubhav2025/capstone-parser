@@ -13,32 +13,74 @@ public class StateSeverityMapper {
      */
     public static FindingState mapGitHubState(String ghState, String dismissedReason) {
         if (ghState == null) {
-            return FindingState.OPEN; // default
+            return FindingState.OPEN;
         }
         String stateLower = ghState.toLowerCase(Locale.ROOT);
-
+    
         switch (stateLower) {
             case "open":
                 return FindingState.OPEN;
+    
             case "resolved":
             case "fixed":
             case "closed":
                 return FindingState.FIXED;
+    
             case "dismissed":
-                   // If there's a reason like "false positive," map to that
-                   if (dismissedReason != null) {
+                if (dismissedReason != null) {
                     String reasonLower = dismissedReason.toLowerCase(Locale.ROOT);
-                    // Map "false positive" to our FALSE_POSITIVE
-                    if ("false positive".equals(reasonLower)) {
+    
+                    // Dependabot / Code Scan "false positive" => or "inaccurate" => FALSE_POSITIVE
+                    if ("false positive".equals(reasonLower)
+                     || "false_positive".equals(reasonLower)
+                     || "inaccurate".equals(reasonLower)) {
                         return FindingState.FALSE_POSITIVE;
                     }
+                    // "tolerable_risk" => SUPPRESSED
+                    // or other reasons => also SUPPRESSED
+                    if ("tolerable_risk".equals(reasonLower)
+                     || "risk_accepted".equals(reasonLower)
+                     || "won't fix".equals(reasonLower) 
+                     || "used_in_tests".equals(reasonLower)) {
+                        return FindingState.SUPPRESSED;
+                    }
                 }
+                // fallback for dismissed if no recognized reason => SUPPRESSED
                 return FindingState.SUPPRESSED;
+    
             default:
-                // fallback
                 return FindingState.OPEN;
         }
     }
+    
+    // public static FindingState mapGitHubState(String ghState, String dismissedReason) {
+    //     if (ghState == null) {
+    //         return FindingState.OPEN; // default
+    //     }
+    //     String stateLower = ghState.toLowerCase(Locale.ROOT);
+
+    //     switch (stateLower) {
+    //         case "open":
+    //             return FindingState.OPEN;
+    //         case "resolved":
+    //         case "fixed":
+    //         case "closed":
+    //             return FindingState.FIXED;
+    //         case "dismissed":
+    //                // If there's a reason like "false positive," map to that
+    //                if (dismissedReason != null) {
+    //                 String reasonLower = dismissedReason.toLowerCase(Locale.ROOT);
+    //                 // Map "false positive" to our FALSE_POSITIVE
+    //                 if ("false positive".equals(reasonLower) || "false_positive".equals(reasonLower) || "inaccurate".equals(reasonLower)) {
+    //                     return FindingState.FALSE_POSITIVE;
+    //                 }
+    //             }
+    //             return FindingState.SUPPRESSED;
+    //         default:
+    //             // fallback
+    //             return FindingState.OPEN;
+    //     }
+    // }
 
     /**
      * Example severity mapping from GH or typical severity strings to our internal severities.

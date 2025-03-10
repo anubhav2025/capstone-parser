@@ -5,5 +5,6 @@ public enum EventTypes {
     PARSE_REQUEST,
     UPDATE_FINDING,
     UPDATE_TICKET,
-    CREATE_TICKET
+    CREATE_TICKET,
+    RUNBOOK_JOB // <-- newly added
 }

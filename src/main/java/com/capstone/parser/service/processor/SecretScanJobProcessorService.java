@@ -1,9 +1,10 @@
 package com.capstone.parser.service.processor;
 
 import com.capstone.parser.enums.ToolTypes;
-import com.capstone.parser.model.*;
+import com.capstone.parser.model.Finding;
 import com.capstone.parser.service.DeDupService;
 import com.capstone.parser.service.ElasticSearchService;
+import com.capstone.parser.service.ParserContextHolder;
 import com.capstone.parser.service.StateSeverityMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,45 +31,43 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
 
     @Override
     public void processJob(String filePath, String esIndex) throws Exception {
-        // 1) Load existing docs for SECRET_SCAN from given index
-        Map<String, Finding> existingMap = deDupService.fetchExistingDocsByTool(
-            ToolTypes.SECRET_SCAN, esIndex
-        );
+        Map<String, Finding> existingMap =
+            deDupService.fetchExistingDocsByTool(ToolTypes.SECRET_SCAN, esIndex);
 
-        // 2) Parse the file
         List<Map<String, Object>> alerts = objectMapper.readValue(
             new File(filePath),
             new TypeReference<List<Map<String, Object>>>() {}
         );
 
-        // 3) For each alert => map => dedup => save or skip
+        List<String> allFindingIds = new ArrayList<>();
+
         for (Map<String, Object> alert : alerts) {
             Finding newFinding = mapAlertToFinding(alert);
-
             String newHash = deDupService.computeHashForFinding(newFinding);
             Finding existing = existingMap.get(newHash);
+
             if (existing == null) {
-                // => new doc
                 String now = Instant.now().toString();
                 newFinding.setCreatedAt(now);
                 newFinding.setUpdatedAt(now);
-
                 elasticSearchService.saveFinding(newFinding, esIndex);
                 existingMap.put(newHash, newFinding);
+                allFindingIds.add(newFinding.getId());
             } else {
-                // => check if updated
-                boolean updated = deDupService.isUpdated(newFinding, existing);
-                if (updated) {
+                if (deDupService.isUpdated(newFinding, existing)) {
                     newFinding.setCreatedAt(existing.getCreatedAt());
                     newFinding.setUpdatedAt(Instant.now().toString());
-
                     deDupService.updateInES(newFinding, existing, esIndex);
                     existingMap.put(newHash, newFinding);
+                    allFindingIds.add(existing.getId());
                 } else {
-                    // skip
+                    allFindingIds.add(existing.getId());
                 }
             }
         }
+
+        elasticSearchService.refreshIndex(esIndex);
+        ParserContextHolder.setChangedFindingIds(allFindingIds);
     }
 
     private Finding mapAlertToFinding(Map<String, Object> alert) {
@@ -79,10 +78,8 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
         String secretTypeDisplay = (String) alert.get("secret_type_display_name");
         String secretType = (String) alert.get("secret_type");
 
-        // Map GH state
-        FindingState internalState = StateSeverityMapper.mapGitHubState(ghState, null);
-        // GH has no explicit severity => default to HIGH, etc.
-        FindingSeverity internalSeverity = StateSeverityMapper.mapGitHubSeverity(null);
+        var internalState = StateSeverityMapper.mapGitHubState(ghState, null);
+        var internalSeverity = StateSeverityMapper.mapGitHubSeverity(null);
 
         Finding finding = new Finding();
         finding.setId(uniqueId);
@@ -101,10 +98,7 @@ public class SecretScanJobProcessorService implements ScanJobProcessorService {
         finding.setComponentName(null);
         finding.setComponentVersion(null);
         finding.setTicketId(null);
-
-        // store entire raw alert
         finding.setToolAdditionalProperties(alert);
-
         return finding;
     }
 }

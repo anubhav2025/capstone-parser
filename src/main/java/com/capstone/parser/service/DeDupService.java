@@ -92,6 +92,7 @@ public class DeDupService {
      */
     public void updateInES(Finding incoming, Finding existing, String esIndex) {
         incoming.setId(existing.getId());
+        if(existing.getTicketId() != null) incoming.setTicketId(existing.getTicketId());
         elasticSearchService.saveFinding(incoming, esIndex);
     }
 

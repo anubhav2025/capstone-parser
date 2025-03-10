@@ -4,6 +4,8 @@ import com.capstone.parser.model.Finding;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
+import co.elastic.clients.elasticsearch.indices.RefreshResponse;
+
 import org.springframework.stereotype.Service;
 
 @Service
@@ -46,6 +48,16 @@ public class ElasticSearchService {
             if (!indexExists) {
                 esClient.indices().create(c -> c.index(indexName));
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void refreshIndex(String indexName) {
+        try {
+            RefreshResponse response = esClient.indices().refresh(r -> r.index(indexName));
+            System.out.println("[ElasticSearchService] Refreshed index=" + indexName 
+                + ", shards=" + response.shards());
         } catch (Exception e) {
             e.printStackTrace();
         }
